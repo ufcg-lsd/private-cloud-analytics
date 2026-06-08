@@ -1,0 +1,380 @@
+---
+title: "Cluster Quota & Allocation Pressure Analysis"
+author: "Paola Marques"
+date: "2026-02-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(data.table)
+library(ggplot2)
+library(scales)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+path <- Sys.getenv("DATASET_PATH", unset = "data")
+
+# Shared plot theme
+plot_theme <- theme_bw(base_family = "Times") +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linetype = "11", color = "gray70", linewidth = 0.3),
+    panel.border     = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text        = element_text(size = 9,  color = "black"),
+    axis.title       = element_text(size = 10, color = "black"),
+    legend.title     = element_blank(),
+    legend.position  = "bottom",
+    strip.background = element_blank()
+  )
+```
+
+```{r capacity-constants}
+# Physical cluster capacity (the 4 production hosts under analysis)
+n_hosts      <- 4
+ram_host_gib <- 256
+vcpu_host    <- 48
+oc_factor    <- 8
+
+ram_total_gib     <- n_hosts * ram_host_gib      
+vcpu_total_phy    <- n_hosts * vcpu_host         
+vcpu_total_oc     <- vcpu_total_phy * oc_factor 
+oc_as_frac_of_phy <- vcpu_total_oc / vcpu_total_phy
+```
+
+```{r load-data}
+# Allocation is rebuilt from server-level data (see build-allocation), so we do
+# not read projects_quota_allocated.csv directly.
+servers_specs      <- fread(file.path(path, "servers_specs.csv"))
+servers_ownerships <- fread(file.path(path, "servers_ownerships.csv"))
+flavors            <- fread(file.path(path, "flavors.csv"))
+projects_quota     <- fread(file.path(path, "projects_quota.csv"))
+
+setDT(servers_specs); setDT(servers_ownerships); setDT(flavors); setDT(projects_quota)
+```
+
+```{r dedup}
+# Drop duplicate records on their natural keys before aggregating
+servers_specs      <- unique(servers_specs,      by = c("server_id", "timestamp"))
+servers_ownerships <- unique(servers_ownerships, by = c("server_id", "timestamp", "project_id"))
+projects_quota     <- unique(projects_quota,     by = c("project_id", "timestamp"))
+```
+
+```{r build-allocation}
+# Allocated capacity = sum of the flavor sizes of the running VMs, per project and
+# timestamp. Servers on the RESERVE host (reservation flavors) are NOT part of the
+# 4 hosts under analysis, so they are excluded entirely.
+flavors[, `:=`(vcpu = as.numeric(vcpu), ram = as.numeric(ram))]
+
+server_time_capacity <- flavors[servers_specs, on = "flavor_id"][
+  , .(server_id, timestamp, flavor_id, vcpu, ram)
+]
+
+# Servers that ever used a reservation flavor -> drop them entirely
+reservation_flavors  <- flavors[grepl("^reservation:", flavor_name), flavor_id]
+reservation_servers  <- server_time_capacity[flavor_id %in% reservation_flavors, unique(server_id)]
+server_time_capacity <- server_time_capacity[!server_id %in% reservation_servers]
+
+# Static server -> project map (a VM does not change project)
+server_project_map <- unique(servers_ownerships[, .(server_id, project_id)], by = "server_id")
+
+server_time_capacity_proj <- server_project_map[server_time_capacity, on = "server_id"][
+  !is.na(project_id), .(server_id, timestamp, project_id, vcpu, ram)
+]
+
+# Aggregate to project x timestamp
+alloc_proj_ts <- server_time_capacity_proj[, .(
+  vcpu_allocated = sum(vcpu, na.rm = TRUE),
+  ram_allocated  = sum(ram, na.rm = TRUE)   # MB
+), by = .(project_id, timestamp)][order(project_id, timestamp)]
+```
+
+```{r coerce-types}
+projects_quota[, `:=`(
+  project_id = as.character(project_id),
+  timestamp  = as.numeric(timestamp),
+  quota_ram  = as.numeric(quota_ram),    # MB
+  quota_vcpu = as.numeric(quota_vcpu)
+)]
+
+alloc_proj_ts[, `:=`(
+  project_id = as.character(project_id),
+  timestamp  = as.numeric(timestamp)
+)]
+```
+
+```{r to-date-helper}
+# All daily series use the value in effect at the END OF DAY (UTC).
+# Quota is a step function (discrete events) and allocation is sampled every
+# 5 min; taking the last sample of each day keeps both series comparable.
+to_utc_date <- function(ts) as.Date(as.POSIXct(ts, origin = "1970-01-01", tz = "UTC"))
+```
+
+```{r quota-cluster-timeseries}
+# Time grid starts at the first quota snapshot
+t0_quota <- min(projects_quota$timestamp)
+ts_vec   <- sort(unique(alloc_proj_ts$timestamp))
+ts_vec   <- ts_vec[ts_vec >= t0_quota]
+
+# Project x timestamp grid + roll join (last quota value <= timestamp)
+all_projects <- sort(unique(projects_quota$project_id))
+grid <- CJ(project_id = all_projects, timestamp = ts_vec, unique = TRUE)
+setkey(grid, project_id, timestamp)
+setkey(projects_quota, project_id, timestamp)
+
+quota_state <- projects_quota[grid, on = .(project_id, timestamp), roll = TRUE]
+quota_state[is.na(quota_ram),  quota_ram  := 0]   # project did not exist yet
+quota_state[is.na(quota_vcpu), quota_vcpu := 0]
+
+# Cluster-level quota per timestamp + capacity fractions
+quota_cluster_ts <- quota_state[, .(
+  quota_ram_gib = sum(quota_ram) / 1024,  # MB -> GiB
+  quota_vcpu    = sum(quota_vcpu)
+), by = timestamp]
+
+quota_cluster_ts[, `:=`(
+  frac_ram_phy  = quota_ram_gib / ram_total_gib,
+  frac_vcpu_phy = quota_vcpu    / vcpu_total_phy,
+  date          = to_utc_date(timestamp)
+)]
+
+# Daily series: quota in effect at end of day
+setorder(quota_cluster_ts, date, timestamp)
+quota_cluster_day <- quota_cluster_ts[, .SD[.N], by = date]
+```
+
+```{r quota-lines-long}
+quota_lines_wide <- quota_cluster_day %>%
+  transmute(
+    date_utc        = date,
+    ram_quota       = frac_ram_phy,
+    ram_physical    = 1,
+    vcpu_quota      = frac_vcpu_phy,
+    vcpu_physical   = 1,
+    vcpu_overcommit = oc_as_frac_of_phy
+  )
+
+ram_long <- quota_lines_wide %>%
+  select(date_utc, quota = ram_quota, physical = ram_physical) %>%
+  pivot_longer(c(quota, physical), names_to = "series", values_to = "value") %>%
+  mutate(resource_label = "RAM",
+         series = recode(series, quota = "Provisioned quota", physical = "Physical capacity"))
+
+vcpu_long <- quota_lines_wide %>%
+  select(date_utc, quota = vcpu_quota, physical = vcpu_physical, overcommit = vcpu_overcommit) %>%
+  pivot_longer(c(quota, physical, overcommit), names_to = "series", values_to = "value") %>%
+  mutate(resource_label = "vCPU",
+         series = recode(series, quota = "Provisioned quota", physical = "Physical capacity",
+                         overcommit = "Capacity with overcommit"))
+
+cluster_lines_long <- bind_rows(ram_long, vcpu_long) %>%
+  mutate(resource_label = factor(resource_label, levels = c("RAM", "vCPU")),
+         series = factor(series, levels = c("Provisioned quota", "Physical capacity",
+                                            "Capacity with overcommit")))
+```
+
+```{r plot-quota-lines, fig.height=4.3, fig.width=6.1}
+xmin <- min(cluster_lines_long$date_utc, na.rm = TRUE)
+xmax <- max(cluster_lines_long$date_utc, na.rm = TRUE)
+breaks_m <- seq(as.Date(format(xmin, "%Y-%m-01")), as.Date(format(xmax, "%Y-%m-01")), by = "1 month")
+breaks_m <- breaks_m[breaks_m >= xmin & breaks_m <= xmax]
+
+p_quota_lines <- ggplot(cluster_lines_long,
+                        aes(date_utc, value, linetype = series, color = series)) +
+  geom_step(linewidth = 0.55) +
+  facet_wrap(~ resource_label, scales = "free_y", ncol = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_date(limits = c(xmin, xmax), breaks = breaks_m,
+               labels = function(x) format(x, "%b"), expand = expansion(mult = c(0, 0))) +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Resource level (% of physical capacity)") +
+  plot_theme + theme(legend.key.width = unit(0.6, "cm"))
+
+p_quota_lines
+ggsave("cluster-quota-vs-capacity.png", p_quota_lines)
+```
+
+```{r alloc-cluster-daily}
+# Cluster-level allocation per timestamp + capacity fractions
+alloc_cluster_ts <- alloc_proj_ts[, .(
+  ram_gib = sum(ram_allocated) / 1024,  # MB -> GiB
+  vcpu    = sum(vcpu_allocated)
+), by = timestamp]
+
+alloc_cluster_ts[, `:=`(
+  frac_ram_phy  = ram_gib / ram_total_gib,
+  frac_vcpu_phy = vcpu    / vcpu_total_phy,
+  date          = to_utc_date(timestamp)
+)]
+
+# Daily series: allocation in effect at end of day (same convention as quota)
+setorder(alloc_cluster_ts, date, timestamp)
+alloc_cluster_day <- alloc_cluster_ts[, .SD[.N], by = date]
+```
+
+```{r plot-alloc-lines, fig.height=4.3, fig.width=6.2}
+alloc_lines_wide <- alloc_cluster_day %>%
+  transmute(date_utc = date,
+            ram_allocated = frac_ram_phy, ram_physical = 1,
+            vcpu_allocated = frac_vcpu_phy, vcpu_physical = 1,
+            vcpu_overcommit = oc_as_frac_of_phy)
+
+ram_long_a <- alloc_lines_wide %>%
+  select(date_utc, allocated = ram_allocated, physical = ram_physical) %>%
+  pivot_longer(c(allocated, physical), names_to = "series", values_to = "value") %>%
+  mutate(resource_label = "RAM",
+         series = recode(series, allocated = "Allocated resources", physical = "Physical capacity"))
+
+vcpu_long_a <- alloc_lines_wide %>%
+  select(date_utc, allocated = vcpu_allocated, physical = vcpu_physical, overcommit = vcpu_overcommit) %>%
+  pivot_longer(c(allocated, physical, overcommit), names_to = "series", values_to = "value") %>%
+  mutate(resource_label = "vCPU",
+         series = recode(series, allocated = "Allocated resources", physical = "Physical capacity",
+                         overcommit = "Capacity with overcommit"))
+
+cluster_alloc_long <- bind_rows(ram_long_a, vcpu_long_a) %>%
+  mutate(resource_label = factor(resource_label, levels = c("RAM", "vCPU")),
+         series = factor(series, levels = c("Allocated resources", "Physical capacity",
+                                            "Capacity with overcommit")))
+
+xmin <- min(cluster_alloc_long$date_utc); xmax <- max(cluster_alloc_long$date_utc)
+breaks_m <- seq(as.Date(format(xmin, "%Y-%m-01")), as.Date(format(xmax, "%Y-%m-01")), by = "1 month")
+breaks_m <- breaks_m[breaks_m >= xmin & breaks_m <= xmax]
+
+p_alloc_lines <- ggplot(cluster_alloc_long,
+                        aes(date_utc, value, linetype = series, color = series)) +
+  geom_line(linewidth = 0.55) +
+  facet_wrap(~ resource_label, scales = "free_y", ncol = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_date(limits = c(xmin, xmax), breaks = breaks_m,
+               labels = function(x) format(x, "%b"), expand = expansion(mult = c(0, 0))) +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = NULL, y = "Resource level (% of physical capacity)") +
+  plot_theme + theme(legend.key.width = unit(0.6, "cm"))
+
+p_alloc_lines
+ggsave("cluster-allocation-vs-capacity.png", p_alloc_lines)
+```
+
+```{r min-flavor}
+# Reference = smallest flavor a user could launch (reservation flavors excluded)
+real_flavors <- flavors[!grepl("^reservation:", flavor_name)]
+setorder(real_flavors, vcpu, ram)
+min_vcpu <- real_flavors[1, vcpu]
+min_ram  <- real_flavors[1, ram]
+```
+
+```{r build-panel}
+# Quota in effect at each (project, timestamp) of the allocation series
+alloc_keys <- unique(alloc_proj_ts[, .(project_id, timestamp)])
+setkey(alloc_keys, project_id, timestamp)
+setkey(projects_quota, project_id, timestamp)
+quota_ts <- projects_quota[alloc_keys, roll = TRUE]
+quota_ts[is.na(quota_ram),  quota_ram  := 0]
+quota_ts[is.na(quota_vcpu), quota_vcpu := 0]
+
+setkey(alloc_proj_ts, project_id, timestamp)
+setkey(quota_ts,      project_id, timestamp)
+panel <- quota_ts[alloc_proj_ts]
+
+panel[, `:=`(remaining_vcpu = quota_vcpu - vcpu_allocated,
+             remaining_ram  = quota_ram  - ram_allocated)]
+panel[, `:=`(potential_failure = (remaining_vcpu < min_vcpu) | (remaining_ram < min_ram),
+             out_of_quota      = (remaining_vcpu <= 0)        | (remaining_ram <= 0))]
+panel[, date := to_utc_date(timestamp)]
+```
+
+```{r pf-aggregates}
+# Per timestamp
+pf_ts <- panel[, .(
+  n_projects = uniqueN(project_id),
+  frac_pf = mean(potential_failure), frac_ooq = mean(out_of_quota),
+  n_pf = sum(potential_failure),     n_ooq = sum(out_of_quota)
+), by = .(timestamp, date)]
+
+# Per project
+pf_by_project <- panel[, .(
+  pct_pf  = 100 * mean(potential_failure, na.rm = TRUE),
+  pct_ooq = 100 * mean(out_of_quota,      na.rm = TRUE),
+  n_obs   = .N
+), by = project_id]
+```
+
+```{r analysis-daily}
+# Reuse the per-timestamp cluster allocation (frac_ram_phy already computed),
+# join the potential-failure rate, and reduce to end of day (same convention).
+pf_alloc_ts <- pf_ts[alloc_cluster_ts, on = .(timestamp, date)]
+setorder(pf_alloc_ts, date, timestamp)
+pf_alloc_day <- pf_alloc_ts[, .SD[.N], by = date]
+
+analysis_daily <- pf_alloc_day[, .(date, frac_pf, frac_ooq, frac_ram_phy, frac_vcpu_phy)]
+analysis_daily <- analysis_daily[is.finite(frac_pf) & is.finite(frac_ram_phy) & is.finite(frac_vcpu_phy)]
+```
+
+```{r plot-loess, fig.height=2.5, fig.width=6}
+ggplot(analysis_daily, aes(frac_ram_phy, frac_pf)) +
+  geom_point(alpha = 0.35, size = 1.5, color = "black") +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 0.6) +
+  scale_x_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
+  labs(x = "Allocated RAM (% of physical capacity)", y = "Projects in potential failure") +
+  plot_theme
+ggsave("potential-failure-vs-ram-pressure.png")
+```
+
+```{r plot-size-vs-pf, fig.height=2.5, fig.width=6}
+proj_size <- alloc_proj_ts[, .(
+  mean_ram_gib = mean(ram_allocated, na.rm = TRUE) / 1024,
+  p95_ram_gib  = quantile(ram_allocated, 0.95, na.rm = TRUE) / 1024,
+  mean_vcpu    = mean(vcpu_allocated, na.rm = TRUE)
+), by = project_id]
+
+pf_proj <- merge(pf_by_project, proj_size, by = "project_id", all.x = TRUE)
+
+ggplot(pf_proj, aes(mean_ram_gib, pct_pf / 100)) +
+  geom_point(alpha = 0.35, size = 1.5, color = "black") +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 0.6) +
+  scale_x_continuous(labels = label_number(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
+  labs(x = "Project size (mean allocated RAM, GB)", y = "Time in potential failure") +
+  plot_theme
+ggsave("potential-failure-vs-project-size.png")
+```
+
+```{r plot-pf-histogram, fig.height=2.5, fig.width=6}
+pf_project <- panel[, .(frac_pf = mean(potential_failure, na.rm = TRUE)), by = project_id]
+
+ggplot(pf_project, aes(frac_pf)) +
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))),
+                 binwidth = 0.05, boundary = 0, closed = "left",
+                 fill = "#D45708", color = "white", linewidth = 0.3) +
+  scale_x_continuous(labels = percent_format(accuracy = 1), breaks = seq(0, 1, 0.25),
+                     expand = expansion(mult = c(0.02, 0.02))) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Time in potential failure", y = "Fraction of projects") +
+  plot_theme
+ggsave("potential-failure-distribution.png")
+```
+
+```{r plot-quota-profiles, fig.height=4, fig.width=6}
+latest_quota <- projects_quota[, .SD[which.max(timestamp)], by = project_id]
+latest_quota[, quota_ram_gb := quota_ram / 1024]
+
+ref_project <- latest_quota[order(quota_vcpu, quota_ram_gb)][1]
+latest_quota[, `:=`(quota_vcpu_norm = quota_vcpu  / ref_project$quota_vcpu,
+                    quota_ram_norm  = quota_ram_gb / ref_project$quota_ram_gb)]
+
+ggplot(latest_quota, aes(quota_vcpu_norm, quota_ram_norm)) +
+  geom_point(color = "#2c7fb8", size = 3, alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
+  scale_x_continuous(breaks = seq(0, ceiling(max(latest_quota$quota_vcpu_norm)) + 5, 5),
+                     expand = expansion(mult = c(0.02, 0.05))) +
+  scale_y_continuous(breaks = seq(0, ceiling(max(latest_quota$quota_ram_norm)) + 5, 5),
+                     expand = expansion(mult = c(0.02, 0.05))) +
+  labs(x = "vCPU quota (normalized by the smallest project)",
+       y = "RAM quota (normalized by the smallest project)") +
+  plot_theme
+ggsave("quota-profiles-normalized.png", dpi = 300)
+```
