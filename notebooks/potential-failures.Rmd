@@ -1,0 +1,222 @@
+---
+title: "potential-failures"
+author: "paola-marques"
+date: "2026-01-21"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(lubridate)
+library(data.table)
+library(scales)
+```
+
+## Importing Data
+```{r}
+path <- "Dataset on Resource Allocation and Usage for a Private Cloud"
+projects_quota <- read.csv(file.path(path, "projects_quota.csv"))
+projects_quota_allocated <- read.csv(file.path(path, "projects_quota_allocated.csv"))
+flavors <- read.csv(file.path(path, "flavors.csv"))
+```
+
+```{r}
+# 0) Setup
+projects_quota <- projects_quota %>%
+  mutate(timestamp = as.numeric(timestamp),
+         quota_vcpu = as.numeric(quota_vcpu),
+         quota_ram  = as.numeric(quota_ram))
+
+projects_quota_allocated <- projects_quota_allocated %>%
+  mutate(timestamp = as.numeric(timestamp),
+         vcpu_allocated = as.numeric(vcpu_allocated),
+         ram_allocated  = as.numeric(ram_allocated))
+
+flavors <- flavors %>%
+  mutate(vcpu = as.numeric(vcpu),
+         ram  = as.numeric(ram))
+```
+
+```{r}
+# 1) Smallest flavor (min vCPU; ties broken by min RAM)
+smallest_flavor <- flavors %>%
+  arrange(vcpu, ram) %>%
+  slice(1) %>%
+  select(vcpu, ram)
+
+min_vcpu <- smallest_flavor$vcpu[1]
+min_ram  <- smallest_flavor$ram[1]
+
+smallest_flavor
+min_vcpu
+min_ram
+```
+
+```{r}
+# 2) Effective quota per project and timestamp
+# Grid of (project_id, timestamp) observed in allocation series
+alloc_dt <- projects_quota_allocated %>%
+  distinct(project_id, timestamp) %>%
+  as.data.table()
+
+quota_dt <- as.data.table(projects_quota)
+
+setkey(quota_dt, project_id, timestamp)
+setkey(alloc_dt, project_id, timestamp)
+
+# Assign most recent quota snapshot to each allocated timestamp
+quota_ts <- quota_dt[alloc_dt, roll = TRUE]
+
+# Fill missing quotas within each project
+setorder(quota_ts, project_id, timestamp)
+quota_ts[, `:=`(
+  quota_vcpu = nafill(quota_vcpu, type = "locf"),
+  quota_ram  = nafill(quota_ram,  type = "locf")
+), by = project_id]
+
+quota_ts[, `:=`(
+  quota_vcpu = nafill(quota_vcpu, type = "nocb"),
+  quota_ram  = nafill(quota_ram,  type = "nocb")
+), by = project_id]
+```
+
+```{r}
+# 3) Remaining capacity + failure states
+proj_capacity <- projects_quota_allocated %>%
+  select(project_id, timestamp, vcpu_allocated, ram_allocated) %>%
+  left_join(
+    quota_ts %>%
+      as.data.frame() %>% 
+      select(project_id, timestamp, quota_vcpu, quota_ram),
+    by = c("project_id", "timestamp")
+  ) %>%
+  mutate(
+    remaining_vcpu = quota_vcpu - vcpu_allocated,
+    remaining_ram  = quota_ram  - ram_allocated,
+    potential_failure = (remaining_vcpu < min_vcpu) | (remaining_ram < min_ram),
+    out_of_resources  = (remaining_vcpu <= 0) | (remaining_ram <= 0)
+  )
+
+proj_capacity
+```
+
+```{r}
+# 4) Per-project failure fractions
+summary_by_project <- proj_capacity %>%
+  group_by(project_id) %>%
+  summarise(
+    n_points = n(),
+    pct_fail = 100 * mean(potential_failure, na.rm = TRUE),
+    pct_out  = 100 * mean(out_of_resources,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(pct_fail))
+
+summary_by_project
+```
+
+```{r}
+# 5) Continuous potential failure episodes (5-minute resolution)
+proj_fail_episodes <- proj_capacity %>%
+  arrange(project_id, timestamp) %>%
+  group_by(project_id) %>%
+  mutate(
+    episode_id = cumsum(potential_failure & !lag(potential_failure, default = FALSE))
+  ) %>%
+  filter(potential_failure) %>%
+  group_by(project_id, episode_id) %>%
+  summarise(
+    start_ts = first(timestamp),
+    end_ts   = last(timestamp),
+    duration_minutes = n() * 5,
+    min_remaining_vcpu = min(remaining_vcpu, na.rm = TRUE),
+    min_remaining_ram  = min(remaining_ram,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(duration_minutes))
+
+proj_fail_episodes
+```
+
+## Visualizations
+```{r}
+ggplot(summary_by_project %>% slice_max(pct_fail, n = 34),
+       aes(x = reorder(project_id, pct_fail), y = pct_fail)) +
+  geom_col(fill = "#334466", color = "white", linewidth = 0.2, width = 0.95) +
+  geom_text(aes(label = paste0(round(pct_fail, 1), "%")),
+            hjust = -0.1, size = 3, family = "Times") +
+  coord_flip() +
+  scale_y_continuous(labels = function(x) paste0(x, "%"),
+                     expand = expansion(mult = c(0, 0.10))) +
+  labs(x = "Project ID", y = "Time in potential failure") +
+  theme_minimal(base_size = 10, base_family = "Times") +
+  theme(
+    panel.border = element_rect(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(colour = "black", linewidth = 0.4),
+    axis.ticks.y = element_line(colour = "black", linewidth = 0.4),
+    panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+  )
+
+ggsave("rank-potential-failures.png")
+```
+
+```{r}
+ggplot(summary_by_project, aes(x = pct_fail)) +
+  stat_ecdf(geom = "step", linewidth = 0.6, color = "#D47804") +
+  scale_x_continuous(labels = function(x) paste0(x, "%")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    x = "Time in potential failure",
+    y = "Fraction of projects") +
+  theme_minimal(base_size = 10, base_family = "Times") +
+  theme(
+    panel.border = element_rect(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(colour = "black", linewidth = 0.4),
+    axis.ticks.y = element_line(colour = "black", linewidth = 0.4),
+    panel.grid.major = element_line(linetype = "dotted", color = "grey80")
+  )
+
+ggsave("ecdf-potential-failures.png")
+```
+
+```{r}
+ggplot(summary_by_project, aes(x = pct_fail)) +
+  geom_histogram(
+    bins = 20,
+    aes(y = after_stat(count / sum(count))),
+    fill = "#008779", color = "white", linewidth = 0.2) +
+  scale_x_continuous(labels = function(x) paste0(x, "%")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    x = "Time in potential failure",
+    y = "Fraction of projects") +
+  theme_minimal(base_size = 10, base_family = "Times") +
+  theme(
+    panel.border = element_rect(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(colour = "black", linewidth = 0.4),
+    axis.ticks.y = element_line(colour = "black", linewidth = 0.4),
+    panel.grid.major = element_line(linetype = "dotted", color = "grey80"),
+  )
+
+ggsave("histogram-potential-failures.png")
+```
+
+```{r}
+ggplot(proj_fail_episodes, aes(x = duration_minutes)) +
+  geom_histogram(bins = 20, fill = "#3734C2", color = "white", linewidth = 0.2) +
+  scale_x_log10(
+    labels = label_log(base = 10),
+    expand = expansion(mult = c(0.05, 0.07))) +
+  labs(
+    x = "Duration of potential failure episodes (minutes)",
+    y = "Number of episodes") +
+  theme_minimal(base_size = 10, base_family = "Times") +
+  theme(
+    panel.border = element_rect(color = "black", linewidth = 0.5),
+    axis.ticks.x = element_line(colour = "black", linewidth = 0.4),
+    axis.ticks.y = element_line(colour = "black", linewidth = 0.4),
+    panel.grid.major = element_line(linetype = "dotted", color = "grey80")
+  )
+
+ggsave("log-scale-potential-failures.png")
+```
