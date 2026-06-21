@@ -175,7 +175,7 @@ cluster_lines_long <- bind_rows(ram_long, vcpu_long) %>%
                                             "Capacity with overcommit")))
 ```
 
-```{r plot-quota-lines, fig.height=4.3, fig.width=6.1}
+```{r plot-quota-lines, fig.height=6, fig.width=6.5}
 xmin <- min(cluster_lines_long$date_utc, na.rm = TRUE)
 xmax <- max(cluster_lines_long$date_utc, na.rm = TRUE)
 breaks_m <- seq(as.Date(format(xmin, "%Y-%m-01")), as.Date(format(xmax, "%Y-%m-01")), by = "1 month")
@@ -183,14 +183,14 @@ breaks_m <- breaks_m[breaks_m >= xmin & breaks_m <= xmax]
 
 p_quota_lines <- ggplot(cluster_lines_long,
                         aes(date_utc, value, linetype = series, color = series)) +
-  geom_step(linewidth = 0.55) +
+  geom_step(linewidth = 0.8) +
   facet_wrap(~ resource_label, scales = "free_y", ncol = 1) +
   scale_y_continuous(labels = percent_format(accuracy = 1)) +
   scale_x_date(limits = c(xmin, xmax), breaks = breaks_m,
                labels = function(x) format(x, "%b"), expand = expansion(mult = c(0, 0))) +
   scale_color_brewer(palette = "Set1") +
   labs(x = NULL, y = "Resource level (% of physical capacity)") +
-  plot_theme + theme(legend.key.width = unit(0.6, "cm"))
+  plot_theme + theme(legend.key.width = unit(0.8, "cm"))
 
 p_quota_lines
 ggsave("cluster-quota-vs-capacity.png", p_quota_lines)
@@ -214,7 +214,7 @@ setorder(alloc_cluster_ts, date, timestamp)
 alloc_cluster_day <- alloc_cluster_ts[, .SD[.N], by = date]
 ```
 
-```{r plot-alloc-lines, fig.height=4.3, fig.width=6.2}
+```{r plot-alloc-lines, fig.height=6, fig.width=6.5}
 alloc_lines_wide <- alloc_cluster_day %>%
   transmute(date_utc = date,
             ram_allocated = frac_ram_phy, ram_physical = 1,
@@ -245,14 +245,14 @@ breaks_m <- breaks_m[breaks_m >= xmin & breaks_m <= xmax]
 
 p_alloc_lines <- ggplot(cluster_alloc_long,
                         aes(date_utc, value, linetype = series, color = series)) +
-  geom_line(linewidth = 0.55) +
+  geom_line(linewidth = 0.8) +
   facet_wrap(~ resource_label, scales = "free_y", ncol = 1) +
   scale_y_continuous(labels = percent_format(accuracy = 1)) +
   scale_x_date(limits = c(xmin, xmax), breaks = breaks_m,
                labels = function(x) format(x, "%b"), expand = expansion(mult = c(0, 0))) +
   scale_color_brewer(palette = "Set1") +
   labs(x = NULL, y = "Resource level (% of physical capacity)") +
-  plot_theme + theme(legend.key.width = unit(0.6, "cm"))
+  plot_theme + theme(legend.key.width = unit(0.8, "cm"))
 
 p_alloc_lines
 ggsave("cluster-allocation-vs-capacity.png", p_alloc_lines)
@@ -313,10 +313,10 @@ analysis_daily <- pf_alloc_day[, .(date, frac_pf, frac_ooq, frac_ram_phy, frac_v
 analysis_daily <- analysis_daily[is.finite(frac_pf) & is.finite(frac_ram_phy) & is.finite(frac_vcpu_phy)]
 ```
 
-```{r plot-loess, fig.height=2.5, fig.width=6}
+```{r plot-loess, fig.height=3, fig.width=6}
 ggplot(analysis_daily, aes(frac_ram_phy, frac_pf)) +
-  geom_point(alpha = 0.35, size = 1.5, color = "black") +
-  geom_smooth(method = "loess", se = FALSE, linewidth = 0.6) +
+  geom_point(alpha = 0.35, size = 2.5, color = "black") +
+  geom_smooth(method = "loess", se = FALSE, color = "#1f77b4", linewidth = 0.8) +
   scale_x_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
   labs(x = "Allocated RAM (% of physical capacity)", y = "Projects in potential failure") +
@@ -324,7 +324,7 @@ ggplot(analysis_daily, aes(frac_ram_phy, frac_pf)) +
 ggsave("potential-failure-vs-ram-pressure.png")
 ```
 
-```{r plot-size-vs-pf, fig.height=2.5, fig.width=6}
+```{r plot-size-vs-pf, fig.height=3, fig.width=6}
 proj_size <- alloc_proj_ts[, .(
   mean_ram_gib = mean(ram_allocated, na.rm = TRUE) / 1024,
   p95_ram_gib  = quantile(ram_allocated, 0.95, na.rm = TRUE) / 1024,
@@ -334,8 +334,8 @@ proj_size <- alloc_proj_ts[, .(
 pf_proj <- merge(pf_by_project, proj_size, by = "project_id", all.x = TRUE)
 
 ggplot(pf_proj, aes(mean_ram_gib, pct_pf / 100)) +
-  geom_point(alpha = 0.35, size = 1.5, color = "black") +
-  geom_smooth(method = "loess", se = FALSE, linewidth = 0.6) +
+  geom_point(alpha = 0.35, size = 2.5, color = "black") +
+  geom_smooth(method = "loess", se = FALSE, color = "#1f77b4", linewidth = 0.9) +
   scale_x_continuous(labels = label_number(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
   labs(x = "Project size (mean allocated RAM, GB)", y = "Time in potential failure") +
@@ -343,13 +343,13 @@ ggplot(pf_proj, aes(mean_ram_gib, pct_pf / 100)) +
 ggsave("potential-failure-vs-project-size.png")
 ```
 
-```{r plot-pf-histogram, fig.height=2.5, fig.width=6}
+```{r plot-pf-histogram, fig.height=3, fig.width=6}
 pf_project <- panel[, .(frac_pf = mean(potential_failure, na.rm = TRUE)), by = project_id]
 
 ggplot(pf_project, aes(frac_pf)) +
   geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))),
                  binwidth = 0.05, boundary = 0, closed = "left",
-                 fill = "#D45708", color = "white", linewidth = 0.3) +
+                 fill = "#66a61e", color = "black", linewidth = 0.3) +
   scale_x_continuous(labels = percent_format(accuracy = 1), breaks = seq(0, 1, 0.25),
                      expand = expansion(mult = c(0.02, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
