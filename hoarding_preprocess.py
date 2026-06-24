@@ -18,6 +18,7 @@ vm_data_df = pd.read_csv(DIR+'/../data_new/servers_utilization.csv')
 
 # convert timestamps into datetime
 vm_data_df["timestamp"] = pd.to_datetime(vm_data_df['timestamp'], unit="s")
+vm_data_df = vm_data_df.sort_values(by=['timestamp']).reset_index(drop=True) # added sort
 
 # drop unused columns 
 vm_data_df = vm_data_df.drop("Unnamed: 0",axis=1)
@@ -26,13 +27,26 @@ vm_data_df = vm_data_df.drop("host_id",axis=1)
 
 # merge with servers_specs to get flavor_id
 servers_specs = pd.read_csv(DIR+'/../data_new/servers_specs.csv')
-servers_specs = servers_specs.drop_duplicates(subset=['server_id'])
-vm_data_df = pd.merge(vm_data_df, servers_specs[['server_id', "flavor_id"]], on='server_id', how="left")
+servers_specs["timestamp"] = pd.to_datetime(servers_specs['timestamp'], unit="s") # added timestamp conversion
+servers_specs = servers_specs.sort_values(by=['timestamp']).reset_index(drop=True) # added sort
+#servers_specs = servers_specs.drop_duplicates(subset=['server_id','flavor_id']) # keep server_id duplicates
+#vm_data_df = pd.merge(vm_data_df, servers_specs[['server_id', "flavor_id"]], on='server_id', how="left")
+vm_data_df = pd.merge_asof(
+    vm_data_df,
+    servers_specs[['server_id', 'timestamp', 'flavor_id']],
+    on='timestamp',
+    by='server_id',
+    direction='backward'
+)
+
+vm_data_df = vm_data_df.sort_values(by=['server_id', 'timestamp']).reset_index(drop=True)
 
 # merge with flavors to get number of vcpus
 flavors = pd.read_csv(DIR+'/../data_new/flavors.csv')
 flavors = flavors.drop_duplicates(subset=['flavor_id'])
 vm_data_df = pd.merge(vm_data_df, flavors[['vcpu', "flavor_id", "flavor_name", "ram"]], on='flavor_id', how="left")
+
+print("total NaNs:",len(vm_data_df.isna())) # total nans before: 14739325, after: 14739325
 
 # add a column to "normalize" the vcpu_utilization according to the number of available vcpus
 vm_data_df["vcpu_utilization_perc"] = vm_data_df["vcpu_utilization"] / (1*vm_data_df["vcpu"])
@@ -228,4 +242,4 @@ print("index:",index)
 print("gap after interpolation:")
 print(single_vm.loc[index-20:].head(25))
 
-#vm_data_df.to_csv(DIR+'/pre-processed.csv', index=False)
+vm_data_df.to_csv(DIR+'/pre-processed.csv', index=False)
