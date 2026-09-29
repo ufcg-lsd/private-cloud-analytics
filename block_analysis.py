@@ -8,16 +8,13 @@ from matplotlib.ticker import FuncFormatter
 import seaborn as sns
 import math
 
-#plt.rcParams["font.family"] = "serif"
 plt.rcParams["font.family"] = ["Times New Roman"]
-
 LW=1.7
 
 np.set_printoptions(suppress=True)
 DIR = os.path.dirname(os.path.abspath(__file__))
 
 # uncomment to create the pre-processed_hourly file, skip if present
-
 """
 # open pre-preprocessed file
 vm_data_df = pd.read_csv(DIR+'/pre-processed.csv')
@@ -80,14 +77,11 @@ print((vm_data_df.head(10)['vcpu_utilization_perc'] > 10).sum()/(vm_data_df.head
 t_range = np.arange(0, 101, 1)
 #active_counts = [(vm_data_df['vcpu_utilization_perc'] > t).sum() for t in t_range]
 active_counts = [(vm_data_df['vcpu_utilization_perc'] > t).sum()/vm_data_df['vcpu_utilization_perc'].count() for t in t_range]
-#plt.figure(figsize=(10, 6))
 fig, ax = plt.subplots(figsize=(6, 4), dpi=300)
-#ax.yaxis.set_major_formatter(mtick.PercentFormatter())
 ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 ax.xaxis.set_major_formatter(add_percent_formatter)
 plt.plot(t_range, active_counts, linewidth=LW)
 plt.axvline(10, color='red', linestyle='--', label='Recommended (10%)', lw=LW)
-#plt.title('Total Meaningful Hours vs. Threshold')
 plt.xlabel('vCPU utilization threshold', fontname="serif", fontsize=10)
 plt.ylabel('Meaningful hours', fontname="serif", fontsize=10)
 plt.xticks(fontname = 'serif', fontsize=9)
@@ -114,17 +108,30 @@ heatmap_data = heatmap_df.pivot_table(
     values='vcpu_utilization_perc',
     aggfunc='mean'
 )
-fig, ax = plt.subplots(figsize=(6,3), dpi=300)
-sns.heatmap(heatmap_data, cmap="YlGnBu", annot=False, cbar_kws={'label': 'Avg P95 vCPU %'}, ax=ax)
-#plt.title('Weekly Usage Heatmap')
+fig, ax = plt.subplots(figsize=(7, 3.2), dpi=300)
+sns.heatmap(
+    heatmap_data, cmap="YlGnBu", annot=False,
+    xticklabels=2,  # label every other hour so ticks don't crowd
+    cbar_kws={'label': 'Avg P95 vCPU %'}, ax=ax
+)
+# sns.heatmap turns the spines off by default -- put a border back
+# around the colored area (and match it on the colorbar)
+for spine in ax.spines.values():
+    spine.set_visible(True)
+    spine.set_edgecolor('black')
+    spine.set_linewidth(0.6)
 plt.xlabel('Hour of Day', fontname="serif", fontsize=10)
 plt.ylabel('Day of Week', fontname="serif", fontsize=10)
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xticks(fontname='serif', fontsize=9, rotation=0)
+plt.yticks(fontname='serif', fontsize=9, rotation=0)
 cbar = ax.collections[0].colorbar
 cbar.ax.tick_params(labelsize=9, labelfontfamily="serif")
-cbar.ax.set_ylabel("Average P95 vCPU utilization",fontname="serif")
+cbar.ax.set_ylabel("Average P95 vCPU utilization", fontname="serif")
 cbar.ax.yaxis.set_major_formatter(add_percent_keep_decimals)
+for spine in cbar.ax.spines.values():
+    spine.set_visible(True)
+    spine.set_edgecolor('black')
+    spine.set_linewidth(0.6)
 plt.savefig(DIR+'/new_formatted_plots/heatmap.png', bbox_inches='tight')
 plt.show()
 
@@ -134,22 +141,12 @@ thresholds = np.arange(0, 25)
 days_remaining = [(daily_active_counts >= t).sum() for t in thresholds]
 servers_remaining = [daily_active_counts[daily_active_counts >= t].index.get_level_values(0).nunique() for t in thresholds]
 fig, ax1 = plt.subplots(figsize=(6, 3), dpi=300)
-#color = 'tab:blue'
 ax1.set_xlabel('Meaningful Hours Required per Day')
-#ax1.set_ylabel('Total Meaningful Days', color=color)
 ax1.set_ylabel('Total Meaningful Days Across VMs')
 plt.xlabel('Meaningful Hours Required per Day', fontname="serif", fontsize=10)
 plt.ylabel('Total Meaningful Days Across VMs', fontname="serif", fontsize=10)
-#ax1.plot(thresholds, days_remaining, marker='o', color=color, linewidth=2, label='Meaningful Days')
 ax1.plot(thresholds, days_remaining, lw=LW)
-#ax1.tick_params(axis='y', labelcolor=color)
 ax1.grid(True, alpha=1, ls=":", linewidth=0.5)
-#ax2 = ax1.twinx() 
-#color = 'tab:red'
-#ax2.set_ylabel('Number of Active Servers', color=color)
-#ax2.plot(thresholds, servers_remaining, marker='s', linestyle='--', color=color, alpha=0.6, label='Active Servers')
-#ax2.tick_params(axis='y', labelcolor=color)
-#plt.title('Total Meaningful Days vs. Threshold')
 plt.xticks(thresholds)
 plt.xticks(fontname = 'serif', fontsize=9)
 plt.yticks(fontname = 'serif', fontsize=9)
@@ -185,9 +182,7 @@ for n in n_values:
     block_counts.append(num_blocks)
 
 plt.figure(figsize=(6, 3), dpi=300)
-#plt.plot(n_values, block_counts, marker='o', linestyle='-', color='purple')
 plt.plot(n_values, block_counts, lw=LW)
-#plt.title('Total Meaningful Blocks vs. Idle Days Tolerance')
 plt.xlabel('Maximum Idle Days Tolerated')
 plt.ylabel('Total Number of Meaningful Blocks')
 plt.xlabel('Maximum idle days tolerated', fontname="serif", fontsize=10)
@@ -222,10 +217,8 @@ blocks_df['duration'] = (blocks_df['end_date'] - blocks_df['begin_date']).dt.day
 blocks_df = blocks_df.sort_values(by=['server_id', 'begin_date'])
 
 # change short idle gaps into meaningful (prevent weekends from fragmenting long meaningful blocks)
-blocks_df['gap_days_prev'] = (blocks_df['begin_date'] - blocks_df['end_date'].shift(1)).dt.days
-blocks_df['gap_days_next'] = (blocks_df['begin_date'].shift(-1) - blocks_df['end_date']).dt.days
-blocks_df['gap_days_prev'] = blocks_df['gap_days_prev'].fillna(1.0)
-blocks_df['gap_days_next'] = blocks_df['gap_days_prev'].fillna(1.0)
+blocks_df['gap_days_prev'] = (blocks_df['begin_date'] - blocks_df.groupby('server_id')['end_date'].shift(1)).dt.days
+blocks_df['gap_days_next'] = (blocks_df.groupby('server_id')['begin_date'].shift(-1) - blocks_df['end_date']).dt.days
 blocks_df.loc[(blocks_df['label'] == 'Idle') & (blocks_df['duration'] <= 3) & (blocks_df['gap_days_prev'] <= 1) & (blocks_df['gap_days_next'] <= 1), 'label'] = 'Meaningful'
 
 # merge adjacent meaningful blocks (merge short idle gaps into longer meaningful blocks)
@@ -235,7 +228,7 @@ server_change = blocks_df['server_id'] != blocks_df['server_id'].shift()
 blocks_df['block_id'] = (time_gap | label_change | server_change).cumsum()
 blocks_df = blocks_df.groupby('block_id').agg(
     server_id=('server_id', 'first'),
-    label=('label', 'first'), # Keep this so we know if the block is idle or meaningful
+    label=('label', 'first'),
     begin_date=('begin_date', 'min'),
     end_date=('end_date', 'max'),
     duration=("duration","sum")
@@ -256,71 +249,76 @@ sns.scatterplot(
 )
 max_val = max(usage_totals['Meaningful'].max(), usage_totals['Idle'].max())
 plt.plot([0, max_val], [0, max_val], color='grey', linestyle='--', lw=LW)
-#plt.title('Meaningful vs Idle', fontsize=14)
 plt.xlabel('Total days of meaningful use', fontname="serif", fontsize=10)
 plt.ylabel('Total days of idle use', fontname="serif", fontsize=10)
 plt.xticks(fontname = 'serif', fontsize=9)
 plt.yticks(fontname = 'serif', fontsize=9)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-#plt.text(max_val*0.05, max_val*0.9, 'High Waste', color='red', fontweight='bold', verticalalignment='top')
-#plt.text(max_val*0.7, max_val*0.1, 'High Utility', color='green', fontweight='bold')
 plt.tight_layout()
 plt.savefig(DIR+'/new_formatted_plots/ratio_scatter.png', bbox_inches='tight')
 plt.show()
 
 # "time until first meaningful block" metric
 
-newborn_servers = blocks_df[~blocks_df.server_id.isin(existing_server_ids)]["server_id"].unique()
-ordered_blocks = blocks_df.sort_values(['server_id', 'begin_date'])
-first_block = ordered_blocks.groupby('server_id').nth(0).reset_index()
-second_block = ordered_blocks.groupby('server_id').nth(1).reset_index()
-meaningful_start = first_block[first_block['label'] == 'Meaningful']['server_id']
-idle_second = second_block[second_block['label'] == 'Idle']['server_id']
-target_servers = set(newborn_servers) & set(meaningful_start) & set(idle_second)
-plot_data = pd.DataFrame({
-    'server_id': list(target_servers)
-})
-plot_data = plot_data.merge(first_block[['server_id', 'duration']], on='server_id')
-plot_data = plot_data.rename(columns={'duration': 'First_Meaningful_Duration'})
-plot_data = plot_data.merge(second_block[['server_id', 'duration']], on='server_id')
-plot_data = plot_data.rename(columns={'duration': 'Second_Idle_Duration'})
-plt.figure(figsize=(6, 5), dpi=300)
-sns.scatterplot(
-    data=plot_data, 
-    x='First_Meaningful_Duration', 
-    y='Second_Idle_Duration',
-    #alpha=0.7,
-    #s=100,
-    #color='darkorange',
-    #edgecolor='black'
-)
-max_val = max(plot_data['First_Meaningful_Duration'].max(), plot_data['Second_Idle_Duration'].max())
-plt.plot([0, max_val], [0, max_val], color='gray', linestyle='--', lw=LW)
-#plt.title('Short Setup Pattern', fontsize=13)
-plt.xlabel('Duration of first meaningful block (days)', fontsize=10, fontname="serif")
-plt.ylabel('Duration of subsequent idle block (days)', fontsize=10, fontname="serif")
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
-plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-plt.savefig(DIR+'/new_formatted_plots/setup_scatter.png', bbox_inches='tight')
-plt.show()
-
-# relabel first meaningful block as idle if 20% or less of subsequent idle block
-ordered_blocks = ordered_blocks[~ordered_blocks.server_id.isin(existing_server_ids)]
+# leading-block / following-block pairing, restricted to newborn
+# servers (excludes existing_server_ids, which have no assignable
+# creation date)
+ordered_blocks = blocks_df[~blocks_df.server_id.isin(existing_server_ids)].sort_values(['server_id', 'begin_date'])
 firsts = ordered_blocks.groupby('server_id').nth(0)
 seconds = ordered_blocks.groupby('server_id').nth(1)
-comparison_df = pd.merge(
-    firsts, 
-    seconds, 
-    on='server_id', 
-    suffixes=('_1st', '_2nd')
+comparison_df = pd.merge(firsts, seconds, on='server_id', suffixes=('_1st', '_2nd'))
+
+candidates = comparison_df.loc[
+    (comparison_df['label_1st'] == 'Meaningful') & (comparison_df['label_2nd'] == 'Idle'),
+    ['duration_1st', 'duration_2nd']
+].copy()
+
+# leading-block cutoff analysis: find the duration that best separates
+# leading-block durations from meaningful block durations generally
+# (equivalent to the two-sample Kolmogorov-Smirnov statistic). This
+# decides which leading blocks represent setup activity rather than
+# genuine first use, based only on the block's own duration.
+leading_durations = candidates['duration_1st']
+all_meaningful_durations = blocks_df.loc[blocks_df['label'] == 'Meaningful', 'duration']
+cutoff_grid = np.arange(1, int(max(leading_durations.max(), all_meaningful_durations.max())) + 1)
+ecdf_leading = np.array([(leading_durations <= d).mean() for d in cutoff_grid])
+ecdf_all = np.array([(all_meaningful_durations <= d).mean() for d in cutoff_grid])
+separation = np.abs(ecdf_leading - ecdf_all)
+
+fig, ax = plt.subplots(figsize=(6, 4), dpi=300)
+ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
+plt.plot(cutoff_grid, separation, linewidth=LW)
+plt.axvline(4, color='red', linestyle='--', lw=LW)
+plt.xlabel('Candidate leading-block cutoff (days)', fontname="serif", fontsize=10)
+plt.ylabel('Distributional separation', fontname="serif", fontsize=10)
+plt.xticks(fontname='serif', fontsize=9)
+plt.yticks(fontname='serif', fontsize=9)
+plt.xlim(0, 30)
+plt.grid(True, alpha=1, ls=":", linewidth=0.5)
+plt.savefig(DIR+'/new_formatted_plots/setup_cutoff_separation.png', bbox_inches='tight')
+plt.show()
+
+SETUP_CUTOFF_DAYS = 4
+
+reclassified = candidates[candidates['duration_1st'] <= SETUP_CUTOFF_DAYS]
+
+print(f"Leading blocks <= {SETUP_CUTOFF_DAYS}d (would be reclassified): {len(reclassified)} of {len(candidates)}")
+print("\nFollowing idle block duration among those reclassified:")
+print(f"  min={reclassified['duration_2nd'].min():.0f}d, "
+      f"median={reclassified['duration_2nd'].median():.0f}d, "
+      f"mean={reclassified['duration_2nd'].mean():.1f}d, "
+      f"max={reclassified['duration_2nd'].max():.0f}d")
+for n in [1, 2, 3, 5, 7, 14, 30]:
+    count = (reclassified['duration_2nd'] <= n).sum()
+    print(f"  followed by idle block <= {n:>2}d: {count:>3} ({count / len(reclassified):.1%})")
+
+# relabel first meaningful block as idle if its own duration is <= SETUP_CUTOFF_DAYS
+setup_mask = (
+    (comparison_df['label_1st'] == 'Meaningful') &
+    (comparison_df['label_2nd'] == 'Idle') &
+    (comparison_df['duration_1st'] <= SETUP_CUTOFF_DAYS)
 )
-negligible_usage_mask = (
-    (comparison_df['label_1st'] == 'Meaningful') & 
-    (comparison_df['label_2nd'] == 'Idle') & 
-    (comparison_df['duration_1st'] <= 0.2 * comparison_df['duration_2nd'])
-)
-servers_to_relabel = comparison_df.loc[negligible_usage_mask, 'server_id'].tolist()
+servers_to_relabel = comparison_df.loc[setup_mask, 'server_id'].tolist()
 mask = (ordered_blocks['server_id'].isin(servers_to_relabel)) & (ordered_blocks['begin_date'] == ordered_blocks.groupby('server_id')['begin_date'].transform('min'))
 ordered_blocks.loc[mask, 'label'] = 'Idle'
 # find days before first meaningful block
@@ -344,6 +342,12 @@ bad_server_durations = bad_server_blocks.groupby("server_id").agg(
 bad_server_durations["activation_latency"] = (bad_server_durations['last_end'] - bad_server_durations['first_begin']).dt.days
 latency_df = latency_df.dropna()
 
+# changed from this vvv
+#latency_df = latency_df.drop(["birth_date","first_meaningful_date"], axis=1).reset_index()
+#bad_server_durations = bad_server_durations.drop(["first_begin","last_end"], axis=1).reset_index()
+# to this vvv for the latency to flavor correlation
+latency_df["timestamp"] = latency_df["first_meaningful_date"]
+bad_server_durations["timestamp"] = bad_server_durations["last_end"]
 latency_df = latency_df.drop(["birth_date","first_meaningful_date"], axis=1).reset_index()
 bad_server_durations = bad_server_durations.drop(["first_begin","last_end"], axis=1).reset_index()
 
@@ -361,7 +365,6 @@ print(f"Mean number of days before first meaningful block:{latency_df['activatio
 
 fig, ax = plt.subplots(figsize=(6,3), dpi=300)
 sns.ecdfplot(data=latency_df, x='activation_latency', ax=ax, lw=LW)
-#plt.title('Days Until First Meaningful Use')
 plt.xlabel('Days until first meaningful use', fontsize=10, fontname="serif")
 plt.ylabel('Proportion of servers', fontsize=10, fontname="serif")
 plt.xticks(fontname = 'serif', fontsize=9)
@@ -373,21 +376,17 @@ plt.show()
 
 print(latency_df.head(5))
 
-""" old 
-# merge with servers_specs to get flavor_id
-servers_specs = pd.read_csv(DIR+'/../data_new/servers_specs.csv')
-servers_specs = servers_specs.drop_duplicates(subset=['server_id'])
-latency_df = pd.merge(latency_df, servers_specs[['server_id', "flavor_id"]], on='server_id', how="left")
-"""
-
+# latency to vm-size correlation
+# remove exit() to show plots
 exit()
+
+latency_df['timestamp'] = latency_df['timestamp'] + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+latency_df = latency_df.sort_values('timestamp').reset_index(drop=True)
 
 # merge with servers_specs to get flavor_id
 servers_specs = pd.read_csv(DIR+'/../data_new/servers_specs.csv')
 servers_specs["timestamp"] = pd.to_datetime(servers_specs['timestamp'], unit="s") # added timestamp conversion
 servers_specs = servers_specs.sort_values(by=['timestamp']).reset_index(drop=True) # added sort
-#servers_specs = servers_specs.drop_duplicates(subset=['server_id','flavor_id']) # keep server_id duplicates
-#vm_data_df = pd.merge(vm_data_df, servers_specs[['server_id', "flavor_id"]], on='server_id', how="left")
 latency_df = pd.merge_asof(
     latency_df,
     servers_specs[['server_id', 'timestamp', 'flavor_id']],
@@ -430,3 +429,5 @@ plt.ylabel('RAM', fontsize=12)
 plt.grid(True, alpha=0.3, linewidth=0.5)
 plt.tight_layout()
 plt.show()
+
+print("should be zero:",latency_df['flavor_id'].isna().sum())

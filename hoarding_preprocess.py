@@ -47,6 +47,7 @@ flavors = flavors.drop_duplicates(subset=['flavor_id'])
 vm_data_df = pd.merge(vm_data_df, flavors[['vcpu', "flavor_id", "flavor_name", "ram"]], on='flavor_id', how="left")
 
 print("total NaNs:",len(vm_data_df.isna())) # total nans before: 14739325, after: 14739325
+print("total NaNs rows:",(vm_data_df.isna().sum(axis=1) > 0).sum())
 
 # add a column to "normalize" the vcpu_utilization according to the number of available vcpus
 vm_data_df["vcpu_utilization_perc"] = vm_data_df["vcpu_utilization"] / (1*vm_data_df["vcpu"])
@@ -54,7 +55,7 @@ vm_data_df["vcpu_utilization_perc"] = vm_data_df["vcpu_utilization"] / (1*vm_dat
 # drop unused columns
 vm_data_df = vm_data_df.drop("flavor_id",axis=1)
 vm_data_df = vm_data_df.drop("flavor_name",axis=1)
-vm_data_df = vm_data_df.drop("ram",axis=1)
+#vm_data_df = vm_data_df.drop("ram",axis=1)
 
 # vcpu_utilization_perc over 100% in 0.32% of rows
 print("rows with vcpu_utilization_perc over 100:",len(vm_data_df[vm_data_df['vcpu_utilization_perc'] > 100]))
@@ -65,7 +66,7 @@ sns.violinplot(x=vm_data_df[vm_data_df['vcpu_utilization_perc'] > 100]["vcpu_uti
 plt.ylabel("Density", fontsize=12)
 plt.show()
 
-# only a very small number of valus above 100% are caused by time gaps and multiple samples being summed as one
+# only a very small number of values above 100% are caused by time gaps and multiple samples being summed as one
 # dropping and interpolating should fix these
 time_gaps = vm_data_df.sort_values(by=['server_id', 'timestamp'])
 time_gaps["time_diff"] = time_gaps.groupby("server_id")["timestamp"].diff()
@@ -223,7 +224,20 @@ def fill_with_hard_limit(
         return out.loc[:, out.columns[0]]
     return out
 
+print("--------- INTERPOLATION COUNT vvv")
+print("total rows before: ",len(vm_data_df))
+print("total NaNs rows before: ",(vm_data_df.isna().sum(axis=1) > 0).sum())
+nansbefore = (vm_data_df.isna().sum(axis=1) > 0).sum()
+
 vm_data_df = fill_with_hard_limit(vm_data_df, 14)
+
+print("total NaNs rows after: ",(vm_data_df.isna().sum(axis=1) > 0).sum())
+print("total rows after: ",len(vm_data_df))
+interpolated_nans = nansbefore - (vm_data_df.isna().sum(axis=1) > 0).sum()
+proportion = (interpolated_nans / len(vm_data_df))*100
+print("interpolated nans: ",interpolated_nans)
+print("proportion: ",proportion,"%")
+print("--------- INTERPOLATION COUNT ^^^")
 
 gaps = vm_data_df.dropna()
 gaps["time_diff"] = gaps.groupby("server_id")["timestamp"].diff()
@@ -242,4 +256,5 @@ print("index:",index)
 print("gap after interpolation:")
 print(single_vm.loc[index-20:].head(25))
 
-vm_data_df.to_csv(DIR+'/pre-processed.csv', index=False)
+# uncomment to save pre-processed file to use in the analysis
+#vm_data_df.to_csv(DIR+'/pre-processed.csv', index=False)
