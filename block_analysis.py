@@ -195,7 +195,7 @@ plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/blocks_vs_gaps.png', bbox_inches='tight')
 plt.show()
 
-THRESHOLD_GAP = 3
+THRESHOLD_GAP = 5
 
 # BLOCK ANALYSIS
 
@@ -219,7 +219,28 @@ blocks_df = blocks_df.sort_values(by=['server_id', 'begin_date'])
 # change short idle gaps into meaningful (prevent weekends from fragmenting long meaningful blocks)
 blocks_df['gap_days_prev'] = (blocks_df['begin_date'] - blocks_df.groupby('server_id')['end_date'].shift(1)).dt.days
 blocks_df['gap_days_next'] = (blocks_df.groupby('server_id')['begin_date'].shift(-1) - blocks_df['end_date']).dt.days
-blocks_df.loc[(blocks_df['label'] == 'Idle') & (blocks_df['duration'] <= 3) & (blocks_df['gap_days_prev'] <= 1) & (blocks_df['gap_days_next'] <= 1), 'label'] = 'Meaningful'
+
+# added code to show how many short idle blocks are caused by weekends ----- vvv
+bridge_mask = (
+    (blocks_df['label'] == 'Idle') &
+    (blocks_df['duration'] <= THRESHOLD_GAP) &
+    (blocks_df['gap_days_prev'] <= 1) &
+    (blocks_df['gap_days_next'] <= 1)
+)
+
+# quantify how many of the bridged gaps are pure weekend breaks
+# (every day in the span is Saturday or Sunday) vs. something else
+# (a holiday, a multi-day pause spilling into weekdays, etc.)
+def is_pure_weekend(begin, end):
+    return all(d.weekday() >= 5 for d in pd.date_range(begin, end, freq='D'))
+
+bridged = blocks_df.loc[bridge_mask, ['begin_date', 'end_date', 'duration']].copy()
+bridged['is_weekend'] = bridged.apply(lambda r: is_pure_weekend(r['begin_date'], r['end_date']), axis=1)
+n_weekend = bridged['is_weekend'].sum()
+print(f"{n_weekend} of {len(bridged)} bridged idle blocks ({n_weekend/len(bridged):.1%}) are pure weekend breaks")
+# --- ^^^
+
+blocks_df.loc[(blocks_df['label'] == 'Idle') & (blocks_df['duration'] <= THRESHOLD_GAP) & (blocks_df['gap_days_prev'] <= 1) & (blocks_df['gap_days_next'] <= 1), 'label'] = 'Meaningful'
 
 # merge adjacent meaningful blocks (merge short idle gaps into longer meaningful blocks)
 time_gap = blocks_df['gap_days_prev'] > 1
@@ -258,7 +279,14 @@ plt.tight_layout()
 plt.savefig(DIR+'/new_formatted_plots/ratio_scatter.png', bbox_inches='tight')
 plt.show()
 
+n_above = (usage_totals['Idle'] > usage_totals['Meaningful']).sum()
+n_total = len(usage_totals)
+print(f"{n_above} of {n_total} servers ({n_above / n_total:.1%}) fall above the diagonal (more idle days than meaningful days)")
+
 # "time until first meaningful block" metric
+
+# old linear scale plot (blue points) replaced by log scale plot (orange)
+# original setup_scatter.png was here
 
 # leading-block / following-block pairing, restricted to newborn
 # servers (excludes existing_server_ids, which have no assignable
@@ -311,6 +339,32 @@ print(f"  min={reclassified['duration_2nd'].min():.0f}d, "
 for n in [1, 2, 3, 5, 7, 14, 30]:
     count = (reclassified['duration_2nd'] <= n).sum()
     print(f"  followed by idle block <= {n:>2}d: {count:>3} ({count / len(reclassified):.1%})")
+
+# new log-log leading_block_idle_check, replaces setup_scatter
+
+fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+ax.scatter(candidates['duration_1st'], candidates['duration_2nd'],
+           alpha=0.5, s=40, color='steelblue', edgecolor='w', label='Not reclassified')
+ax.scatter(reclassified['duration_1st'], reclassified['duration_2nd'],
+           alpha=0.8, s=40, color='darkorange', edgecolor='w',
+           label=f'Reclassified as setup (<= {SETUP_CUTOFF_DAYS}d)')
+ax.axvline(SETUP_CUTOFF_DAYS + 0.5, color='red', linestyle='--', lw=LW,
+           label=f'Setup cutoff ({SETUP_CUTOFF_DAYS}d)')
+diag_min = min(candidates['duration_1st'].min(), candidates['duration_2nd'].min())
+diag_max = max(candidates['duration_1st'].max(), candidates['duration_2nd'].max())
+ax.plot([diag_min, diag_max], [diag_min, diag_max], color='grey', linestyle='--', lw=LW,
+        label='y = x (idle longer than setup)')
+ax.set_yscale('log')
+ax.set_xscale('log')
+plt.xlabel('Leading block duration (days)', fontname="serif", fontsize=10)
+plt.ylabel('Following idle block duration (days)', fontname="serif", fontsize=10)
+plt.xticks(fontname='serif', fontsize=9)
+plt.yticks(fontname='serif', fontsize=9)
+plt.legend(prop={'family': 'serif', 'size': 8})
+plt.grid(True, alpha=1, ls=":", linewidth=0.5)
+plt.tight_layout()
+plt.savefig(DIR + '/new_formatted_plots/leading_block_idle_check.png', bbox_inches='tight')
+plt.show()
 
 # relabel first meaningful block as idle if its own duration is <= SETUP_CUTOFF_DAYS
 setup_mask = (
