@@ -135,6 +135,29 @@ for spine in cbar.ax.spines.values():
 plt.savefig(DIR+'/new_formatted_plots/heatmap.png', bbox_inches='tight')
 plt.show()
 
+# ------- 3am deep dive
+# how many VMs actually contribute to the 3am spike seen in the heatmap
+per_vm_hourly = heatmap_df.groupby(['server_id', 'hour'])['vcpu_utilization_perc'].mean().unstack()
+n_total = len(per_vm_hourly)
+
+# metric 1: for how many VMs is 3am their single highest-utilization hour?
+peak_hour = per_vm_hourly.idxmax(axis=1)
+n_peak_at_3am = (peak_hour == 3).sum()
+print(f"{n_peak_at_3am} of {n_total} VMs ({n_peak_at_3am / n_total:.1%}) have their single highest average hourly utilization at 3 AM")
+
+# metric 2: for how many VMs is 3am utilization meaningfully above their own baseline?
+baseline = per_vm_hourly.drop(columns=3).mean(axis=1)
+spike_gap = per_vm_hourly[3] - baseline
+n_elevated = (spike_gap > 2).sum()  # >2 percentage points above their own other-hour average
+print(f"{n_elevated} of {n_total} VMs ({n_elevated / n_total:.1%}) show 3 AM utilization at least 2pp above their own baseline")
+
+# how many VMs ever register an active hour at 3am (local time)?
+vms_active_at_3am = heatmap_df.loc[(heatmap_df['hour'] == 3) & heatmap_df['is_active_hour'], 'server_id'].unique()
+n_active_3am = len(vms_active_at_3am)
+n_total = heatmap_df['server_id'].nunique()
+print(f"{n_active_3am} of {n_total} VMs ({n_active_3am / n_total:.1%}) have at least one active hour (>= {THRESHOLD_VCPU}% vCPU) at 3 AM")
+# -------
+
 # daily hours threshold analysis, use it to determine minimum number of active hours in a day
 daily_active_counts = vm_data_df.groupby(['server_id', vm_data_df['timestamp'].dt.date])['is_active_hour'].sum()
 thresholds = np.arange(0, 25)
@@ -161,7 +184,7 @@ THRESHOLD_HOURS = 2
 daily_summary = vm_data_df.groupby(['server_id', vm_data_df['timestamp'].dt.date]).agg(
     active_hours_count=('is_active_hour', 'sum')
 ).reset_index()
-daily_summary['label'] = np.where(daily_summary['active_hours_count'] >= 2, "Meaningful", "Idle")
+daily_summary['label'] = np.where(daily_summary['active_hours_count'] >= THRESHOLD_HOURS, "Meaningful", "Idle")
 daily_summary = daily_summary[['server_id', 'timestamp', 'label']].copy()
 daily_summary.rename(columns={'timestamp': 'date'}, inplace=True)
 
@@ -195,7 +218,7 @@ plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/blocks_vs_gaps.png', bbox_inches='tight')
 plt.show()
 
-THRESHOLD_GAP = 5
+THRESHOLD_GAP = 3
 
 # BLOCK ANALYSIS
 
@@ -283,6 +306,16 @@ n_above = (usage_totals['Idle'] > usage_totals['Meaningful']).sum()
 n_total = len(usage_totals)
 print(f"{n_above} of {n_total} servers ({n_above / n_total:.1%}) fall above the diagonal (more idle days than meaningful days)")
 
+# mean of per-vm ratios. not included in the main analysis
+no_idle = usage_totals['Idle'] == 0
+per_vm_ratio = usage_totals.loc[~no_idle, 'Meaningful'] / usage_totals.loc[~no_idle, 'Idle']
+print(f"VMs with per-VM ratio exactly 0 (never Meaningful): {(per_vm_ratio == 0).sum()} of {len(per_vm_ratio)}")
+print(per_vm_ratio.describe())
+print("Top 5 per-VM ratios:\n", per_vm_ratio.sort_values(ascending=False).head())
+print(f"\n{no_idle.sum()} of {n_total} servers have zero idle days (ratio undefined) -- excluded from the per-VM average below")
+print(f"Mean of per-VM Meaningful/Idle ratios: {per_vm_ratio.mean():.4f}")
+print(f"Median of per-VM Meaningful/Idle ratios: {per_vm_ratio.median():.4f} (less sensitive to a few VMs with an extreme ratio)")
+
 # "time until first meaningful block" metric
 
 # old linear scale plot (blue points) replaced by log scale plot (orange)
@@ -318,7 +351,7 @@ ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 plt.plot(cutoff_grid, separation, linewidth=LW)
 plt.axvline(4, color='red', linestyle='--', lw=LW)
 plt.xlabel('Candidate leading-block cutoff (days)', fontname="serif", fontsize=10)
-plt.ylabel('Distributional separation', fontname="serif", fontsize=10)
+plt.ylabel('CDF difference', fontname="serif", fontsize=10)
 plt.xticks(fontname='serif', fontsize=9)
 plt.yticks(fontname='serif', fontsize=9)
 plt.xlim(0, 30)

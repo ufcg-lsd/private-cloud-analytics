@@ -172,6 +172,16 @@ plt.xlabel('Gap (s)', fontsize=12)
 plt.ylabel("Density", fontsize=12)
 plt.show()
 
+# added to count proportion of gaps covered by 4200 threshold
+gaps = vm_data_df.reset_index(level="timestamp").reset_index(drop=True).sort_values(by=['server_id', 'timestamp']).dropna()
+gaps["time_diff"] = gaps.groupby("server_id")["timestamp"].diff()
+gaps["time_diff"] = gaps["time_diff"].dt.total_seconds()
+gaps = gaps[gaps['time_diff'] > 300]   # <-- restrict to actual gaps, not every normal 300s step
+print("Total gaps:",len(gaps))
+print("Gaps <= 4200:",len(gaps[gaps['time_diff'] <= 4200]))
+print("Proportion:",len(gaps[gaps['time_diff'] <= 4200])/len(gaps))
+print("Proportion doubling threshold:",len(gaps[gaps['time_diff'] <= 8400])/len(gaps))
+
 # interpolating all gaps below 4200s will leave only a few gaps that will split blocks during the block analysis
 gaps = vm_data_df.reset_index(level="timestamp").reset_index(drop=True).sort_values(by=['server_id', 'timestamp']).dropna()
 gaps["time_diff"] = gaps.groupby("server_id")["timestamp"].diff()
