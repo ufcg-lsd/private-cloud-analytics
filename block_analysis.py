@@ -9,7 +9,11 @@ import seaborn as sns
 import math
 
 plt.rcParams["font.family"] = ["Times New Roman"]
-LW=1.7
+plt.rcParams.update({
+    'lines.dashed_pattern': [5, 5],  # [dash_length_pt, gap_length_pt]
+    'lines.linewidth': 1.2
+})
+LW=1
 
 np.set_printoptions(suppress=True)
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -77,15 +81,15 @@ print((vm_data_df.head(10)['vcpu_utilization_perc'] > 10).sum()/(vm_data_df.head
 t_range = np.arange(0, 101, 1)
 #active_counts = [(vm_data_df['vcpu_utilization_perc'] > t).sum() for t in t_range]
 active_counts = [(vm_data_df['vcpu_utilization_perc'] > t).sum()/vm_data_df['vcpu_utilization_perc'].count() for t in t_range]
-fig, ax = plt.subplots(figsize=(6, 4), dpi=300)
+fig, ax = plt.subplots(figsize=(6.5, 4), dpi=300)
 ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 ax.xaxis.set_major_formatter(add_percent_formatter)
 plt.plot(t_range, active_counts, linewidth=LW)
 plt.axvline(10, color='red', linestyle='--', label='Recommended (10%)', lw=LW)
-plt.xlabel('vCPU utilization threshold', fontname="serif", fontsize=10)
-plt.ylabel('Meaningful hours', fontname="serif", fontsize=10)
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xlabel('vCPU utilization threshold', fontsize=12)
+plt.ylabel('Meaningful hours', fontsize=12)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/active_vs_threshold.png', bbox_inches='tight')
 plt.show()
@@ -108,7 +112,7 @@ heatmap_data = heatmap_df.pivot_table(
     values='vcpu_utilization_perc',
     aggfunc='mean'
 )
-fig, ax = plt.subplots(figsize=(7, 3.2), dpi=300)
+fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=300)
 sns.heatmap(
     heatmap_data, cmap="YlGnBu", annot=False,
     xticklabels=2,  # label every other hour so ticks don't crowd
@@ -120,13 +124,13 @@ for spine in ax.spines.values():
     spine.set_visible(True)
     spine.set_edgecolor('black')
     spine.set_linewidth(0.6)
-plt.xlabel('Hour of Day', fontname="serif", fontsize=10)
-plt.ylabel('Day of Week', fontname="serif", fontsize=10)
-plt.xticks(fontname='serif', fontsize=9, rotation=0)
-plt.yticks(fontname='serif', fontsize=9, rotation=0)
+plt.xlabel('Hour of Day', fontsize=12)
+plt.ylabel('Day of Week', fontsize=12)
+plt.xticks(fontsize=11, rotation=0)
+plt.yticks(fontsize=11, rotation=0)
 cbar = ax.collections[0].colorbar
-cbar.ax.tick_params(labelsize=9, labelfontfamily="serif")
-cbar.ax.set_ylabel("Average P95 vCPU utilization", fontname="serif")
+cbar.ax.tick_params(labelsize=9)
+cbar.ax.set_ylabel("Average P95 vCPU utilization")
 cbar.ax.yaxis.set_major_formatter(add_percent_keep_decimals)
 for spine in cbar.ax.spines.values():
     spine.set_visible(True)
@@ -163,16 +167,16 @@ daily_active_counts = vm_data_df.groupby(['server_id', vm_data_df['timestamp'].d
 thresholds = np.arange(0, 25)
 days_remaining = [(daily_active_counts >= t).sum() for t in thresholds]
 servers_remaining = [daily_active_counts[daily_active_counts >= t].index.get_level_values(0).nunique() for t in thresholds]
-fig, ax1 = plt.subplots(figsize=(6, 3), dpi=300)
+fig, ax1 = plt.subplots(figsize=(6.5, 3), dpi=300)
 ax1.set_xlabel('Meaningful Hours Required per Day')
 ax1.set_ylabel('Total Meaningful Days Across VMs')
-plt.xlabel('Meaningful Hours Required per Day', fontname="serif", fontsize=10)
-plt.ylabel('Total Meaningful Days Across VMs', fontname="serif", fontsize=10)
+plt.xlabel('Meaningful Hours Required per Day', fontsize=12)
+plt.ylabel('Total Meaningful Days Across VMs', fontsize=12)
 ax1.plot(thresholds, days_remaining, lw=LW)
 ax1.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.xticks(thresholds)
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 plt.axvline(2, color='red', linestyle='--', lw=LW)
 fig.tight_layout()
 plt.savefig(DIR+'/new_formatted_plots/meaningful_day_threshold.png', bbox_inches='tight')
@@ -204,15 +208,15 @@ for n in n_values:
     num_blocks = (meaningful_only['gap_to_prev_meaningful'] > (n + 1)).sum() + meaningful_only['server_id'].nunique()
     block_counts.append(num_blocks)
 
-plt.figure(figsize=(6, 3), dpi=300)
+plt.figure(figsize=(6.5, 3), dpi=300)
 plt.plot(n_values, block_counts, lw=LW)
 plt.xlabel('Maximum Idle Days Tolerated')
 plt.ylabel('Total Number of Meaningful Blocks')
-plt.xlabel('Maximum idle days tolerated', fontname="serif", fontsize=10)
-plt.ylabel('Number of meaningful blocks', fontname="serif", fontsize=10)
+plt.xlabel('Maximum idle days tolerated', fontsize=12)
+plt.ylabel('Number of meaningful blocks', fontsize=12)
 plt.xticks(n_values)
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 plt.axvline(3, color='red', linestyle='--', lw=LW)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/blocks_vs_gaps.png', bbox_inches='tight')
@@ -282,7 +286,7 @@ blocks_df = blocks_df.groupby('block_id').agg(
 ratio = blocks_df[blocks_df["label"] == "Meaningful"]["duration"].sum() / blocks_df[blocks_df["label"] == "Idle"]["duration"].sum()
 print(f"Ratio over entire dataset: {ratio}")
 usage_totals = blocks_df.groupby(['server_id', 'label'])['duration'].sum().unstack(fill_value=0)
-plt.figure(figsize=(6, 5), dpi=300)
+plt.figure(figsize=(6.5, 5), dpi=300)
 sns.scatterplot(
     data=usage_totals, 
     x='Meaningful', 
@@ -293,13 +297,13 @@ sns.scatterplot(
 )
 max_val = max(usage_totals['Meaningful'].max(), usage_totals['Idle'].max())
 plt.plot([0, max_val], [0, max_val], color='grey', linestyle='--', lw=LW)
-plt.xlabel('Total days of meaningful use', fontname="serif", fontsize=10)
-plt.ylabel('Total days of idle time', fontname="serif", fontsize=10)
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xlabel('Total days of meaningful use', fontsize=12)
+plt.ylabel('Total days of idle time', fontsize=12)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.tight_layout()
-plt.savefig(DIR+'/new_formatted_plots/ratio_scatter.png', bbox_inches='tight')
+plt.savefig(DIR+'/new_formatted_plots/ratio_scatter.png', bbox_inches='tight', dpi=300)
 plt.show()
 
 n_above = (usage_totals['Idle'] > usage_totals['Meaningful']).sum()
@@ -346,14 +350,14 @@ ecdf_leading = np.array([(leading_durations <= d).mean() for d in cutoff_grid])
 ecdf_all = np.array([(all_meaningful_durations <= d).mean() for d in cutoff_grid])
 separation = np.abs(ecdf_leading - ecdf_all)
 
-fig, ax = plt.subplots(figsize=(6, 4), dpi=300)
+fig, ax = plt.subplots(figsize=(6.5, 4), dpi=300)
 ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 plt.plot(cutoff_grid, separation, linewidth=LW)
 plt.axvline(4, color='red', linestyle='--', lw=LW)
-plt.xlabel('Candidate leading-block cutoff (days)', fontname="serif", fontsize=10)
-plt.ylabel('CDF difference', fontname="serif", fontsize=10)
-plt.xticks(fontname='serif', fontsize=9)
-plt.yticks(fontname='serif', fontsize=9)
+plt.xlabel('Candidate leading-block cutoff (days)', fontsize=12)
+plt.ylabel('CDF difference', fontsize=12)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 plt.xlim(0, 30)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/setup_cutoff_separation.png', bbox_inches='tight')
@@ -375,7 +379,7 @@ for n in [1, 2, 3, 5, 7, 14, 30]:
 
 # new log-log leading_block_idle_check, replaces setup_scatter
 
-fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+fig, ax = plt.subplots(figsize=(6.5, 4.5), dpi=300)
 ax.scatter(candidates['duration_1st'], candidates['duration_2nd'],
            alpha=0.5, s=40, color='steelblue', edgecolor='w', label='Not reclassified')
 ax.scatter(reclassified['duration_1st'], reclassified['duration_2nd'],
@@ -389,11 +393,18 @@ ax.plot([diag_min, diag_max], [diag_min, diag_max], color='grey', linestyle='--'
         label='y = x (idle longer than setup)')
 ax.set_yscale('log')
 ax.set_xscale('log')
-plt.xlabel('Leading block duration (days)', fontname="serif", fontsize=10)
-plt.ylabel('Following idle block duration (days)', fontname="serif", fontsize=10)
-plt.xticks(fontname='serif', fontsize=9)
-plt.yticks(fontname='serif', fontsize=9)
-plt.legend(prop={'family': 'serif', 'size': 8})
+ax.legend(
+    loc='upper center',
+    bbox_to_anchor=(0.5, -0.15),
+    ncols=2,           # Places items side-by-side in 2 columns
+    frameon=False,     # Removes the legend border box
+    fontsize=10
+)
+plt.xlabel('Leading block duration (days)', fontsize=12)
+plt.ylabel('Following idle block duration (days)', fontsize=12)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
+#plt.legend(prop={'size': 10})
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.tight_layout()
 plt.savefig(DIR + '/new_formatted_plots/leading_block_idle_check.png', bbox_inches='tight')
@@ -450,12 +461,12 @@ print("^^^ they should be the same ^^^")
 print(f"Median number of days before first meaningful block:{latency_df['activation_latency'].median()}")
 print(f"Mean number of days before first meaningful block:{latency_df['activation_latency'].mean()}")
 
-fig, ax = plt.subplots(figsize=(6,3), dpi=300)
+fig, ax = plt.subplots(figsize=(6.5,3), dpi=300)
 sns.ecdfplot(data=latency_df, x='activation_latency', ax=ax, lw=LW)
-plt.xlabel('Days until first meaningful use', fontsize=10, fontname="serif")
-plt.ylabel('Proportion of VMs', fontsize=10, fontname="serif")
-plt.xticks(fontname = 'serif', fontsize=9)
-plt.yticks(fontname = 'serif', fontsize=9)
+plt.xlabel('Days until first meaningful use', fontsize=12)
+plt.ylabel('Proportion of VMs', fontsize=12)
+plt.xticks(fontsize=11)
+plt.yticks(fontsize=11)
 ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.savefig(DIR+'/new_formatted_plots/days_until.png', bbox_inches='tight')
