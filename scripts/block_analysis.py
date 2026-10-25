@@ -91,7 +91,7 @@ plt.ylabel('Meaningful hours', fontsize=12)
 plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-plt.savefig(DIR+'/new_formatted_plots/active_vs_threshold.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/active_vs_threshold.png', bbox_inches='tight')
 plt.show()
 
 THRESHOLD_VCPU = 10
@@ -136,7 +136,7 @@ for spine in cbar.ax.spines.values():
     spine.set_visible(True)
     spine.set_edgecolor('black')
     spine.set_linewidth(0.6)
-plt.savefig(DIR+'/new_formatted_plots/heatmap.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/heatmap.png', bbox_inches='tight')
 plt.show()
 
 # ------- 3am deep dive
@@ -179,7 +179,7 @@ plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 plt.axvline(2, color='red', linestyle='--', lw=LW)
 fig.tight_layout()
-plt.savefig(DIR+'/new_formatted_plots/meaningful_day_threshold.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/meaningful_day_threshold.png', bbox_inches='tight')
 plt.show()
 
 THRESHOLD_HOURS = 2
@@ -219,7 +219,7 @@ plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 plt.axvline(3, color='red', linestyle='--', lw=LW)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-plt.savefig(DIR+'/new_formatted_plots/blocks_vs_gaps.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/blocks_vs_gaps.png', bbox_inches='tight')
 plt.show()
 
 THRESHOLD_GAP = 3
@@ -303,7 +303,7 @@ plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.tight_layout()
-plt.savefig(DIR+'/new_formatted_plots/ratio_scatter.png', bbox_inches='tight', dpi=300)
+plt.savefig(DIR+'/../plots/ratio_scatter.png', bbox_inches='tight', dpi=300)
 plt.show()
 
 n_above = (usage_totals['Idle'] > usage_totals['Meaningful']).sum()
@@ -360,7 +360,7 @@ plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 plt.xlim(0, 30)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-plt.savefig(DIR+'/new_formatted_plots/setup_cutoff_separation.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/setup_cutoff_separation.png', bbox_inches='tight')
 plt.show()
 
 SETUP_CUTOFF_DAYS = 4
@@ -407,7 +407,7 @@ plt.yticks(fontsize=11)
 #plt.legend(prop={'size': 10})
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
 plt.tight_layout()
-plt.savefig(DIR + '/new_formatted_plots/leading_block_idle_check.png', bbox_inches='tight')
+plt.savefig(DIR + '/../plots/leading_block_idle_check.png', bbox_inches='tight')
 plt.show()
 
 # relabel first meaningful block as idle if its own duration is <= SETUP_CUTOFF_DAYS
@@ -469,7 +469,7 @@ plt.xticks(fontsize=11)
 plt.yticks(fontsize=11)
 ax.yaxis.set_major_formatter(decimal_to_percent_formatter)
 plt.grid(True, alpha=1, ls=":", linewidth=0.5)
-plt.savefig(DIR+'/new_formatted_plots/days_until.png', bbox_inches='tight')
+plt.savefig(DIR+'/../plots/days_until.png', bbox_inches='tight')
 plt.show()
 
 print(latency_df.head(5))
@@ -482,7 +482,7 @@ latency_df['timestamp'] = latency_df['timestamp'] + pd.Timedelta(days=1) - pd.Ti
 latency_df = latency_df.sort_values('timestamp').reset_index(drop=True)
 
 # merge with servers_specs to get flavor_id
-servers_specs = pd.read_csv(DIR+'/../data_new/servers_specs.csv')
+servers_specs = pd.read_csv(DIR+'/../../data_new/servers_specs.csv')
 servers_specs["timestamp"] = pd.to_datetime(servers_specs['timestamp'], unit="s") # added timestamp conversion
 servers_specs = servers_specs.sort_values(by=['timestamp']).reset_index(drop=True) # added sort
 latency_df = pd.merge_asof(
@@ -494,7 +494,7 @@ latency_df = pd.merge_asof(
 )
 
 # merge with flavors to get number of vcpus
-flavors = pd.read_csv(DIR+'/../data_new/flavors.csv')
+flavors = pd.read_csv(DIR+'/../../data_new/flavors.csv')
 flavors = flavors.drop_duplicates(subset=['flavor_id'])
 latency_df = pd.merge(latency_df, flavors[['vcpu', "flavor_id", "ram"]], on='flavor_id', how="left")
 

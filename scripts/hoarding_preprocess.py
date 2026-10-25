@@ -14,7 +14,7 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 # 1 vcpu => vcpu_utilization range 0 - 100
 # 2 vcpus => vcpu_utilization range 0 - 200
 
-vm_data_df = pd.read_csv(DIR+'/../data_new/servers_utilization.csv')
+vm_data_df = pd.read_csv(DIR+'/../../data_new/servers_utilization.csv')
 
 # convert timestamps into datetime
 vm_data_df["timestamp"] = pd.to_datetime(vm_data_df['timestamp'], unit="s")
@@ -26,7 +26,7 @@ vm_data_df = vm_data_df.drop("id",axis=1)
 vm_data_df = vm_data_df.drop("host_id",axis=1)
 
 # merge with servers_specs to get flavor_id
-servers_specs = pd.read_csv(DIR+'/../data_new/servers_specs.csv')
+servers_specs = pd.read_csv(DIR+'/../../data_new/servers_specs.csv')
 servers_specs["timestamp"] = pd.to_datetime(servers_specs['timestamp'], unit="s") # added timestamp conversion
 servers_specs = servers_specs.sort_values(by=['timestamp']).reset_index(drop=True) # added sort
 #servers_specs = servers_specs.drop_duplicates(subset=['server_id','flavor_id']) # keep server_id duplicates
@@ -42,7 +42,7 @@ vm_data_df = pd.merge_asof(
 vm_data_df = vm_data_df.sort_values(by=['server_id', 'timestamp']).reset_index(drop=True)
 
 # merge with flavors to get number of vcpus
-flavors = pd.read_csv(DIR+'/../data_new/flavors.csv')
+flavors = pd.read_csv(DIR+'/../../data_new/flavors.csv')
 flavors = flavors.drop_duplicates(subset=['flavor_id'])
 vm_data_df = pd.merge(vm_data_df, flavors[['vcpu', "flavor_id", "flavor_name", "ram"]], on='flavor_id', how="left")
 
