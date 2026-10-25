@@ -15,13 +15,13 @@ Based on the dataset:
 ## Structure
 
 - `notebooks/` (R), quota and potential-failure analysis:
-  - [`quota-allocation-pressure.Rmd`](notebooks/quota-allocation-pressure.Rmd):
+  - [quota-allocation-pressure.Rmd](notebooks/quota-allocation-pressure.Rmd):
     provisioned quota versus allocated resources against the cluster's physical and
     overcommit capacity, and the resulting per-project potential-failure exposure.
 - `scripts/` (Python), resource-hoarding analysis:
-  - [`hoarding_preprocess.py`](scripts/hoarding_preprocess.py): per-VM vCPU and RAM
+  - [hoarding_preprocess.py](scripts/hoarding_preprocess.py): per-VM vCPU and RAM
     utilization preprocessing (alignment to a 5-minute grid, interpolation of short gaps).
-  - [`block_analysis.py`](scripts/block_analysis.py): meaningful and idle block
+  - [block_analysis.py](scripts/block_analysis.py): meaningful and idle block
     segmentation and hoarding metrics (idle versus meaningful time, time to first
     meaningful use).
 - `plots/`: all generated figures.
