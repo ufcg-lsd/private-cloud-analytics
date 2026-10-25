@@ -23,8 +23,10 @@ plot_theme <- theme_bw(base_family = "Times") +
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(linetype = "11", color = "gray70", linewidth = 0.3),
     panel.border     = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    axis.text        = element_text(size = 9,  color = "black"),
-    axis.title       = element_text(size = 10, color = "black"),
+    axis.text        = element_text(size = 11, color = "black"),
+    axis.title       = element_text(size = 12, color = "black"),
+    legend.text      = element_text(size = 10),
+    strip.text       = element_text(size = 11),
     legend.title     = element_blank(),
     legend.position  = "bottom",
     strip.background = element_blank()
@@ -47,6 +49,7 @@ oc_as_frac_of_phy <- vcpu_total_oc / vcpu_total_phy
 ```{r load-data}
 # Allocation is rebuilt from server-level data (see build-allocation), so we do
 # not read projects_quota_allocated.csv directly.
+path <- "/Users/paolamoura/Downloads/2-submit-dib/Dataset on Resource Allocation and Usage for a Private Cloud"
 servers_specs      <- fread(file.path(path, "servers_specs.csv"))
 servers_ownerships <- fread(file.path(path, "servers_ownerships.csv"))
 flavors            <- fread(file.path(path, "flavors.csv"))
@@ -118,8 +121,15 @@ t0_quota <- min(projects_quota$timestamp)
 ts_vec   <- sort(unique(alloc_proj_ts$timestamp))
 ts_vec   <- ts_vec[ts_vec >= t0_quota]
 
+# Exclude projects whose entire footprint is on the reserve host (reservation
+# VMs only, no regular VM): the reserve host is outside the 4 analyzed hosts, so
+# its quota must not be counted either.
+resv_projects        <- unique(as.character(server_project_map[server_id %in% reservation_servers, project_id]))
+active_projects      <- unique(as.character(alloc_proj_ts$project_id))
+reservation_only     <- setdiff(resv_projects, active_projects)
+
 # Project x timestamp grid + roll join (last quota value <= timestamp)
-all_projects <- sort(unique(projects_quota$project_id))
+all_projects <- sort(setdiff(unique(projects_quota$project_id), reservation_only))
 grid <- CJ(project_id = all_projects, timestamp = ts_vec, unique = TRUE)
 setkey(grid, project_id, timestamp)
 setkey(projects_quota, project_id, timestamp)
@@ -193,7 +203,7 @@ p_quota_lines <- ggplot(cluster_lines_long,
   plot_theme + theme(legend.key.width = unit(0.8, "cm"))
 
 p_quota_lines
-ggsave("cluster-quota-vs-capacity.png", p_quota_lines)
+ggsave("cluster-quota-vs-capacity.png", p_quota_lines, width = 6.5, height = 5.5, units = "in", dpi = 300)
 ```
 
 ```{r alloc-cluster-daily}
@@ -255,7 +265,7 @@ p_alloc_lines <- ggplot(cluster_alloc_long,
   plot_theme + theme(legend.key.width = unit(0.8, "cm"))
 
 p_alloc_lines
-ggsave("cluster-allocation-vs-capacity.png", p_alloc_lines)
+ggsave("cluster-allocation-vs-capacity.png", p_alloc_lines, width = 6.5, height = 5.5, units = "in", dpi = 300)
 ```
 
 ```{r min-flavor}
@@ -267,17 +277,24 @@ min_ram  <- real_flavors[1, ram]
 ```
 
 ```{r build-panel}
-# Quota in effect at each (project, timestamp) of the allocation series
+# Quota in effect at each (project, timestamp) of the allocation series.
+# Every project has a quota, and projects_quota records only CHANGES, so the first
+# recorded value also holds for earlier periods: we carry it BACKWARD as well as
+# forward (rollends = c(TRUE, TRUE)), instead of treating pre-record periods as 0.
 alloc_keys <- unique(alloc_proj_ts[, .(project_id, timestamp)])
 setkey(alloc_keys, project_id, timestamp)
 setkey(projects_quota, project_id, timestamp)
-quota_ts <- projects_quota[alloc_keys, roll = TRUE]
-quota_ts[is.na(quota_ram),  quota_ram  := 0]
-quota_ts[is.na(quota_vcpu), quota_vcpu := 0]
+quota_ts <- projects_quota[alloc_keys, roll = TRUE, rollends = c(TRUE, TRUE)]
+
+# A few projects run VMs but have no quota record at all; their quota cannot be
+# determined, so they are excluded from the quota-based (potential-failure)
+# analysis. This keeps the denominator consistent with the quota-utilization view.
+projects_without_quota <- quota_ts[, .(all_na = all(is.na(quota_ram))), by = project_id][all_na == TRUE, project_id]
+quota_ts <- quota_ts[!project_id %in% projects_without_quota]
 
 setkey(alloc_proj_ts, project_id, timestamp)
 setkey(quota_ts,      project_id, timestamp)
-panel <- quota_ts[alloc_proj_ts]
+panel <- quota_ts[alloc_proj_ts, nomatch = NULL]   # inner join: only projects with a quota
 
 panel[, `:=`(remaining_vcpu = quota_vcpu - vcpu_allocated,
              remaining_ram  = quota_ram  - ram_allocated)]
@@ -315,13 +332,12 @@ analysis_daily <- analysis_daily[is.finite(frac_pf) & is.finite(frac_ram_phy) & 
 
 ```{r plot-loess, fig.height=3, fig.width=6}
 ggplot(analysis_daily, aes(frac_ram_phy, frac_pf)) +
-  geom_point(alpha = 0.35, size = 2.5, color = "black") +
-  geom_smooth(method = "loess", se = FALSE, color = "#1f77b4", linewidth = 0.8) +
+  geom_point(alpha = 0.5, size = 2.5, color = "#2c7fb8") +
   scale_x_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
   labs(x = "Allocated RAM (% of physical capacity)", y = "Projects in potential failure") +
   plot_theme
-ggsave("potential-failure-vs-ram-pressure.png")
+ggsave("potential-failure-vs-ram-pressure.png", width = 6.5, height = 3.2, units = "in", dpi = 300)
 ```
 
 ```{r plot-size-vs-pf, fig.height=3, fig.width=6}
@@ -334,13 +350,12 @@ proj_size <- alloc_proj_ts[, .(
 pf_proj <- merge(pf_by_project, proj_size, by = "project_id", all.x = TRUE)
 
 ggplot(pf_proj, aes(mean_ram_gib, pct_pf / 100)) +
-  geom_point(alpha = 0.35, size = 2.5, color = "black") +
-  geom_smooth(method = "loess", se = FALSE, color = "#1f77b4", linewidth = 0.9) +
+  geom_point(alpha = 0.6, size = 2.5, color = "#2c7fb8") +
   scale_x_continuous(labels = label_number(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.02))) +
   labs(x = "Project size (mean allocated RAM, GB)", y = "Time in potential failure") +
   plot_theme
-ggsave("potential-failure-vs-project-size.png")
+ggsave("potential-failure-vs-project-size.png", width = 6.5, height = 3.2, units = "in", dpi = 300)
 ```
 
 ```{r plot-pf-histogram, fig.height=3, fig.width=6}
@@ -349,17 +364,19 @@ pf_project <- panel[, .(frac_pf = mean(potential_failure, na.rm = TRUE)), by = p
 ggplot(pf_project, aes(frac_pf)) +
   geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))),
                  binwidth = 0.05, boundary = 0, closed = "left",
-                 fill = "#66a61e", color = "black", linewidth = 0.3) +
+                 fill = "#2c7fb8", color = "white", linewidth = 0.7) +
   scale_x_continuous(labels = percent_format(accuracy = 1), breaks = seq(0, 1, 0.25),
                      expand = expansion(mult = c(0.02, 0.02))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
   labs(x = "Time in potential failure", y = "Fraction of projects") +
   plot_theme
-ggsave("potential-failure-distribution.png")
+ggsave("potential-failure-distribution.png", width = 6.5, height = 3.2, units = "in", dpi = 300)
 ```
 
 ```{r plot-quota-profiles, fig.height=4, fig.width=6}
-latest_quota <- projects_quota[, .SD[which.max(timestamp)], by = project_id]
+# Exclude reservation-only projects (footprint entirely on the reserve host), so
+# reservation is left out of the quota-profile analysis as well.
+latest_quota <- projects_quota[!project_id %in% reservation_only, .SD[which.max(timestamp)], by = project_id]
 latest_quota[, quota_ram_gb := quota_ram / 1024]
 
 ref_project <- latest_quota[order(quota_vcpu, quota_ram_gb)][1]
@@ -376,5 +393,41 @@ ggplot(latest_quota, aes(quota_vcpu_norm, quota_ram_norm)) +
   labs(x = "vCPU quota (normalized by the smallest project)",
        y = "RAM quota (normalized by the smallest project)") +
   plot_theme
-ggsave("quota-profiles-normalized.png", dpi = 300)
+ggsave("quota-profiles-per-project-normalized.png", width = 6.5, height = 4.5, units = "in", dpi = 300)
+```
+
+```{r plot-quota-utilization, fig.height=3.5, fig.width=6}
+# Per-project RAM quota utilization over the observation period, showing the
+# heterogeneity between projects pinned at their quota ceiling and projects that
+# retain unused allocation rights. Reuses `panel` (quota_ram, ram_allocated per
+# project x timestamp). Projects with no quota record (quota_ram == 0) are excluded.
+quota_util_proj <- panel[quota_ram > 0, .(
+  used = mean(pmin(ram_allocated / quota_ram, 1), na.rm = TRUE)  # cap at 100% for display
+), by = project_id]
+quota_util_proj[, unused := 1 - used]
+setorder(quota_util_proj, used)
+quota_util_proj[, rank := .I]
+
+med_util <- median(quota_util_proj$used)
+
+quota_util_long <- melt(
+  quota_util_proj[, .(rank, Used = used, Unused = unused)],
+  id.vars = "rank", variable.name = "part", value.name = "frac"
+)
+quota_util_long[, part := factor(part, levels = c("Unused", "Used"))]
+
+ggplot(quota_util_long, aes(rank, frac, fill = part)) +
+  geom_col(width = 0.8) +
+  geom_hline(yintercept = med_util, linetype = "dashed", color = "black", linewidth = 0.4) +
+  annotate("text", x = 1.5, y = med_util + 0.03,
+           label = sprintf("median %.0f%%", 100 * med_util),
+           hjust = 0, size = 4, family = "Times") +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0, 0.02))) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
+  scale_fill_manual(values = c(Used = "#2c7fb8", Unused = "grey80"),
+                    breaks = c("Used", "Unused"),
+                    labels = c("Allocated (used) quota", "Unused allocation rights")) +
+  labs(x = "Projects (ordered by RAM quota utilization)", y = "Share of RAM quota") +
+  plot_theme + theme(legend.key.size = unit(0.35, "cm"))
+ggsave("quota-utilization-per-project.png", width = 6.5, height = 3.5, units = "in", dpi = 300)
 ```
